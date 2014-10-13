@@ -8,11 +8,9 @@ function admin_content(&$a) {
 		goaway($a->get_baseurl());
 	}
 	
-	//Get 100 flagged entries.
-	$r = q("SELECT `flag`.*, `profile`.`name`, `profile`.`homepage`
-					FROM `flag` JOIN `profile` ON `flag`.`pid`=`profile`.`id`
-					ORDER BY `total` DESC LIMIT 100"
-				);
+  //Get flagged entries.
+  $flagRepository = new \Friendica\Directory\Domain\Flagging\FlagRepository();
+	$r = $flagRepository->getTopFlaggedProfiles();
 	
 	if(count($r)) {
 		$flagged = '';
@@ -29,15 +27,18 @@ function admin_content(&$a) {
 	}
 	
   //Get the maintenance backlog size.
-  $res = q("SELECT count(*) as `count` FROM `profile` WHERE `updated` < '%s'",
-    dbesc(date('Y-m-d H:i:s', time()-$a->config['maintenance']['min_scrape_delay'])));
-  $maintenance_backlog = 'unknown';
-  if(count($res)){ $maintenance_backlog = $res[0]['count'].' entries'; }
+  $profileRepository = new \Friendica\Directory\Domain\Profile\ProfileRepository();
+  $backlog = $profileRepository->getMaintenanceBacklog($a->config['maintenance']['min_scrape_delay']);
+  
+  //Convert this to a humanly readable string.
+  $maintenance_backlog = is_null($backlog) ? 'unknown' : "$backlog entries";
   
 	//Get the pulling backlog size.
-	$res = q("SELECT count(*) as `count` FROM `sync-pull-queue`");
-  $pulling_backlog = 'unknown';
-  if(count($res)){ $pulling_backlog = $res[0]['count'].' entries'; }
+  $pullQueueRepository = new \Friendica\Directory\Domain\Syncing\PullQueueRepository();
+	$backlog = $pullQueueRepository->getBacklog();
+  
+  //Convert this to a humanly readable string.
+  $pulling_backlog = is_null($backlog) ? 'unknown' : "$backlog entries";
 	
 	$tpl = file_get_contents('view/admin.tpl');
   return replace_macros($tpl, array(

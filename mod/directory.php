@@ -10,7 +10,9 @@ function directory_init(&$a) {
 }
 
 function directory_content(&$a) {
-
+	
+	$profileRepository = new \Friendica\Directory\Domain\Profile\ProfileRepository();
+	
 	$forums = false;
 	if($a->argc == 2 && $a->argv[1] === 'forum')
 		$forums = true;
@@ -44,37 +46,17 @@ function directory_content(&$a) {
 		'$args' => (($forums) ? '/forum' : ''),
 		'$finding' => (strlen($search) ? '<h4>' . t('Search for: ') . "'" . $search . "'" . '</h4>' : "")
 	));
-
-	if($search)
-		$search = dbesc($search . '*');
-	$sql_extra = ((strlen($search)) ? " AND MATCH (`name`, `pdesc`, `homepage`, `locality`, `region`, `country-name`, `gender`, `marital`, `tags` ) 
-		AGAINST ('$search' IN BOOLEAN MODE) " : "");
-
-	if($forums)
-		$sql_extra .= " and comm = 1 "; 
-
-	$sql_extra = str_replace('%','%%',$sql_extra);
-
-	$r = q("SELECT COUNT(*) AS `total` FROM `profile` WHERE `censored` = 0 $sql_extra ");
-	if(count($r))
-		$a->set_pager_total($r[0]['total']);
-
-	if($alpha)
-		$order = " order by name asc ";
-	else
-		$order = " order by updated desc, id desc ";
-
-
-	$r = q("SELECT * FROM `profile` WHERE `censored` = 0 $sql_extra $order LIMIT %d , %d ",
-		intval($a->pager['start']),
-		intval($a->pager['itemspage'])
-	);
-
-	if(count($r)) {
+	
+	//Use profile repository to count the total profiles.
+	$totalProfiles = $profileRepository->countProfiles($search, $forums);
+	$a->set_pager_total($totalProfiles);
+	
+	$profiles = $profileRepository->findProfiles($search, $forums, $alpha, $a->pager['start'], $a->pager['itemspage']);
+	if(count($profiles)) {
 
 		$tpl = file_get_contents('view/directory_item.tpl');
 
-		foreach($r as $rr) {
+		foreach($profiles as $rr) {
 
 			$pdesc = (($rr['pdesc']) ? $rr['pdesc'] . '<br />' : '');
 
