@@ -48,6 +48,7 @@ error_reporting(E_ALL^E_NOTICE);
 $start_syncing = time();
 
 //Startup.
+require_once('autoload.php');
 require_once('boot.php');
 $a = new App;
 

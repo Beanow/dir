@@ -16,7 +16,7 @@ class PullQueueRepository extends AbstractDatabaseRepository
 	public function getBacklog()
 	{
 		
-		$res = q("SELECT count(*) as `count` FROM `sync-pull-queue`");
+		$res = $this->db->q("SELECT count(*) as `count` FROM `sync-pull-queue`");
 		return count($res) ? $res[0]['count'] : 0;
 		
 	}

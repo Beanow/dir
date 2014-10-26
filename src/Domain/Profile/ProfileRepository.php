@@ -10,6 +10,29 @@ class ProfileRepository extends AbstractDatabaseRepository
 {
 	
 	/**
+	 * Finds a profile based on it's URL.
+	 * @param  string $url The Homepage URL. Does not need to be normalized.
+	 * @return array?
+	 */
+	public function getProfileByUrl($url)
+	{
+		
+		$nurl = str_replace(array('https:','//www.'), array('http:','//'), $url);
+  	$r = $this->db->q(sprintf(
+  		"SELECT * FROM `profile` WHERE (`homepage` = '%s' OR `nurl` = '%s') LIMIT 1",
+			dbesc($url),
+			dbesc($nurl)
+		));
+		
+		if(count($r) == 1){
+			return $r[0];
+		} else {
+			return null;
+		}
+		
+	}
+	
+	/**
 	 * Count the amount of profiles that require maintenance.
 	 * @param integer $maxAge The maximum age in seconds that a profile may have before maintenance.
 	 * @return integer? Null if the count is unknown. Otherwise an integer.
@@ -19,8 +42,8 @@ class ProfileRepository extends AbstractDatabaseRepository
 		
 		$res = $this->db->q(sprintf(
 			"SELECT count(*) as `count` FROM `profile` WHERE `updated` < '%s'",
-	    $this->db->escape(date('Y-m-d H:i:s', time()-abs($maxAge)))
-	  ));
+			$this->db->escape(date('Y-m-d H:i:s', time()-abs($maxAge)))
+		));
 		
 		return count($res) ? $res[0]['count'] : null;
 		

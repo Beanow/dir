@@ -14,22 +14,20 @@ function notice_site($url, $check_health=false)
   
   global $a;
   
+  //Get the repositories to handle our queries.
+  $siteHealthRepository = new \Friendica\Directory\Domain\SiteHealth\SiteHealthRepository();
+  
   //Parse the domain from the URL.
   $site = parse_site_from_url($url);
   
   //Search for it in the site-health table.
-  $result = q(
-    "SELECT * FROM `site-health` WHERE `base_url`= '%s' ORDER BY `id` ASC LIMIT 1",
-    dbesc($site)
-  );
+  $entry = $siteHealthRepository->getHealthByBaseUrl($site);
   
   //If it exists, see if we need to update any flags / statuses.
-  if(!empty($result) && isset($result[0])){
-    
-    $entry = $result[0];
+  if($entry){
     
     //If we are allowed to do health checks...
-    if(!!$check_health){
+    if($check_health){
       
       //And the site is in bad health currently, do a check now.
       //This is because you have a high certainty the site may perform better now.
@@ -51,23 +49,14 @@ function notice_site($url, $check_health=false)
   else{
     
     //Add it and make sure it is ready for probing.
-    q(
-      "INSERT INTO `site-health` (`base_url`, `dt_first_noticed`) VALUES ('%s', NOW())",
-      dbesc($site)
-    );
+    $entry = $siteHealthRepository->createEntry(array(
+      'base_url' => $site,
+      "dt_first_noticed" => date('Y-m-d H:i:s')
+    ));
     
     //And in case we should probe now, do so.
-    if(!!$check_health){
-      
-      $result = q(
-        "SELECT * FROM `site-health` WHERE `base_url`= '%s' ORDER BY `id` ASC LIMIT 1",
-        dbesc($site)
-      );
-      if(!empty($result) && isset($result[0])){
-        $entry = $result[0];
-        run_site_probe($result[0]['id'], $entry);
-      }
-      
+    if($check_health && $entry){
+      run_site_probe($entry['id'], $entry);
     }
     
   }
@@ -97,20 +86,19 @@ function run_site_probe($id, &$entry_out)
   
   global $a;
   
+  $siteProbeRepository = new \Friendica\Directory\Domain\SiteHealth\SiteProbeRepository();
+  $siteHealthRepository = new \Friendica\Directory\Domain\SiteHealth\SiteHealthRepository();
+  
   //Get the site information from the DB, based on the ID.
-  $result = q(
-    "SELECT * FROM `site-health` WHERE `id`= %u ORDER BY `id` ASC LIMIT 1",
-    intval($id)
-  );
+  $entry = $siteHealthRepository->getHealthById($id);
   
   //Abort the probe if site is not known.
-  if(!$result || !isset($result[0])){
+  if(!$entry){
     logger('Unknown site-health ID being probed: '.$id);
     throw new \Exception('Unknown site-health ID being probed: '.$id);
   }
   
   //Shortcut.
-  $entry = $result[0];
   $base_url = $entry['base_url'];
   $probe_location = $base_url.'/friendica/json';
   
@@ -194,50 +182,41 @@ function run_site_probe($id, &$entry_out)
   
   $parse_failed = !$data;
   
-  $parsedDataQuery = '';
+  $parsedData = array();
   if(!$parse_failed){
     
     $given_base_url_match = $data->url == $base_url;
     
     //Record the probe speed in a probes table.
-    q(
-      "INSERT INTO `site-probe` (`site_health_id`, `dt_performed`, `request_time`)".
-      "VALUES (%u, NOW(), %u)",
-      $entry['id'],
-      $time
-    );
+    $siteProbeRepository->createEntry(array(
+      'site_health_id' => $entry['id'],
+      'request_time' => $time,
+      'dt_performed' => date('Y-m-d H:i:s')
+    ));
     
     //Update any health calculations or otherwise processed data.
-    $parsedDataQuery = sprintf(
-      "`dt_last_seen` = NOW(),
-       `name` = '%s',
-       `version` = '%s',
-       `plugins` = '%s',
-       `reg_policy` = '%s',
-       `info` = '%s',
-       `admin_name` = '%s',
-       `admin_profile` = '%s',
-      ",
-      dbesc($data->site_name),
-      dbesc($data->version),
-      dbesc(implode("\r\n", $data->plugins)),
-      dbesc($data->register_policy),
-      dbesc($data->info),
-      dbesc($data->admin->name),
-      dbesc($data->admin->profile)
+    $parsedData = array(
+      'dt_last_seen' => date('Y-m-d H:i:s'),
+      'name' => $data->site_name,
+      'version' => $data->version,
+      'plugins' => implode("\r\n",$data->plugins),
+      'reg_policy' => $data->register_policy,
+      'info' => $data->info,
+      'admin_name' => $data->admin_name,
+      'admin_profile' => $data->admin_profile
     );
     
     //Did we use HTTPS?
     $urlMeta = parse_url($probe_location);
     if($urlMeta['scheme'] == 'https'){
-      $parsedDataQuery .= sprintf("`ssl_state` = b'%u',", $sslcert_issues ? '0' : '1');
+      $parsedData['ssl_state'] = $sslcert_issues ? '0' : '1';
     } else {
-      $parsedDataQuery .= "`ssl_state` = NULL,";
+      $parsedData['ssl_state'] = null;
     }
     
     //Do we have a no scrape supporting node? :D
     if(isset($data->no_scrape_url)){
-      $parsedDataQuery .= sprintf("`no_scrape_url` = '%s',", dbesc($data->no_scrape_url));
+      $parsedData['no_scrape_url'] = $data->no_scrape_url;
     }
     
   }
@@ -247,25 +226,13 @@ function run_site_probe($id, &$entry_out)
   $health = health_score_after_probe($entry['health_score'], !$parse_failed, $time, $version, $sslcert_issues);
   
   //Update the health.
-  q("UPDATE `site-health` SET
-    `health_score` = '%d',
-    $parsedDataQuery
-    `dt_last_probed` = NOW()
-    WHERE `id` = %d LIMIT 1",
-    $health,
-    $entry['id']
-  );
-  
-  //Get the site information from the DB, based on the ID.
-  $result = q(
-    "SELECT * FROM `site-health` WHERE `id`= %u ORDER BY `id` ASC LIMIT 1",
-    $entry['id']
-  );
+  $finalData = array_merge($parsedData, array(
+    'dt_last_probed' => date('Y-m-d H:i:s'),
+    'health_score' => $health
+  ));
   
   //Return updated entry data.
-  if($result && isset($result[0])){
-    $entry_out = $result[0];
-  }
+  $entry_out = $siteHealthRepository->updateEntry($entry['id'], $finalData);
   
 }}
 

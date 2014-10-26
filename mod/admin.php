@@ -1,6 +1,5 @@
 <?php
 
-
 function admin_content(&$a) {
 	
 	if(! $_SESSION['uid']) {
@@ -71,10 +70,12 @@ function admin_post(&$a)
   $perPage = 200;
   $perBatch = 2;
   
+  //Doing a slow, manual batch.
   if($batch){
     
     require_once('include/submit.php');
     require_once('include/site-health.php');
+    $siteHealthRepository = new \Friendica\Directory\Domain\SiteHealth\SiteHealthRepository();
     
     //First get all data from file.
     $data = file_get_contents($file);
@@ -107,8 +108,8 @@ function admin_post(&$a)
         	//A site may well turn 'sour' during the import.
         	//Check the health again for this reason.
         	$site = parse_site_from_url($url);
-					$r = q("SELECT * FROM `site-health` WHERE `base_url`= '%s' ORDER BY `id` ASC LIMIT 1", $site);
-					if(count($r) && intval($r[0]['health_score']) < $a->config['site-health']['skip_import_threshold']){
+					$health = $siteHealthRepository->getHealthByBaseUrl($site);
+					if($health && intval($health['health_score']) < $a->config['site-health']['skip_import_threshold']){
 						continue;
 					}
         	
@@ -120,7 +121,9 @@ function admin_post(&$a)
           
         }catch(\Exception $ex){/* We tried... */}
       }
-      else break;
+      else{
+        break;
+      }
     }
     
     $left = count($list);
@@ -149,6 +152,8 @@ function admin_post(&$a)
   elseif($url){
     
     require_once('include/site-health.php');
+    $siteHealthRepository = new \Friendica\Directory\Domain\SiteHealth\SiteHealthRepository();
+    $profileRepository = new \Friendica\Directory\Domain\Profile\ProfileRepository();
     
     $result = fetch_url($url."/lsearch?p=$page&n=$perPage&search=.*");
     if($result)
@@ -162,13 +167,7 @@ function admin_post(&$a)
       foreach($data->results as $profile){
       	
       	//Skip known profiles.
-      	$purl = $profile->url;
-      	$nurl = str_replace(array('https:','//www.'), array('http:','//'), $purl);
-      	$r = q("SELECT count(*) as `matched` FROM `profile` WHERE (`homepage` = '%s' OR `nurl` = '%s') LIMIT 1",
-					dbesc($purl),
-					dbesc($nurl)
-				);
-				if(count($r) && $r[0]['matched']){
+				if($profileRepository->getProfileByUrl($profile->url)){
 					continue;
 				}
 				
@@ -176,8 +175,8 @@ function admin_post(&$a)
 				else{
 					
 					$site = parse_site_from_url($purl);
-					$r = q("SELECT * FROM `site-health` WHERE `base_url`= '%s' ORDER BY `id` ASC LIMIT 1", $site);
-					if(count($r) && intval($r[0]['health_score']) < $a->config['site-health']['skip_import_threshold']){
+					$health = $siteHealthRepository->getHealthByBaseUrl($site);
+          if($health && intval($health['health_score']) < $a->config['site-health']['skip_import_threshold']){
 						continue;
 					}
 					
